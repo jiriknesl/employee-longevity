@@ -1,0 +1,17 @@
+employee_id,months_in_company,workload_quota,salary_ratio
+likely.leave1@company.com,18,1.28,0.82
+likely.leave2@company.com,22,1.35,0.78
+risky.perf1@company.com,38,0.65,1.28
+risky.perf2@company.com,42,0.58,1.32
+stable.emp1@company.com,25,1.02,1.05
+stable.emp2@company.com,31,0.98,0.97
+stable.emp3@company.com,28,1.05,1.02
+struggling.new1@company.com,4,0.72,1.15
+struggling.new2@company.com,3,0.68,1.08
+promising.new1@company.com,5,1.15,0.95
+promising.new2@company.com,6,1.12,1.02
+underpaid.risk1@company.com,12,0.75,0.82
+underpaid.risk2@company.com,15,0.70,0.85
+overpaid.underperform@company.com,35,0.62,1.25
+star.performer@company.com,24,1.32,0.88
+veteran.stable@company.com,48,1.08,1.12 
