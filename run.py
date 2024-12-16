@@ -36,49 +36,83 @@ def predict_employee(model, trace, employee_data):
         longevity_ci_50 = np.maximum(0, np.percentile(longevity_samples, [25, 75]))
         longevity_ci_75 = np.maximum(0, np.percentile(longevity_samples, [12.5, 87.5]))
 
-        # Probability of staying calculation - adjusted to be more sensitive
+        # Calculate base probability of staying
         logit_p_stay_new = trace.posterior["alpha_stay"] + \
                           trace.posterior["beta_quota_stay"] * employee_data["workload_quota"] + \
                           trace.posterior["beta_salary_stay"] * employee_data["salary_ratio"]
         p_stay_new = 1/(1+np.exp(-logit_p_stay_new))
-        prob_leave = 1 - float(np.mean(p_stay_new))
+        base_prob_leave = 1 - float(np.mean(p_stay_new))
 
-        # More sensitive thresholds for different cases
-        is_high_performer = employee_data["workload_quota"] >= 1.2
-        is_underpaid = employee_data["salary_ratio"] <= 0.85
-        is_underperformer = employee_data["workload_quota"] <= 0.7
-        is_overpaid = employee_data["salary_ratio"] >= 1.2
+        # More nuanced performance and pay categories
+        workload = employee_data["workload_quota"]
+        salary = employee_data["salary_ratio"]
         tenure_months = employee_data["months_in_company"]
 
-        # Adjust leaving probability based on patterns
-        if is_high_performer and is_underpaid:
-            prob_leave = max(prob_leave, 0.7)  # High risk of leaving for better offer
-        elif is_underperformer and is_overpaid and tenure_months > 36:
-            prob_leave = max(prob_leave, 0.6)  # High risk of termination
-        elif is_underperformer and tenure_months < 12:
-            prob_leave = max(prob_leave, 0.5)  # Risk of early termination
+        # Performance levels
+        is_exceptional = workload >= 1.3
+        is_high_performer = workload >= 1.15
+        is_good_performer = workload >= 0.95
+        is_underperformer = workload <= 0.75
+        is_serious_underperformer = workload <= 0.65
 
-        # Reason probabilities if leaves
+        # Pay levels relative to performance
+        expected_salary = 0.9 + (workload - 0.9) * 1.1  # Simple linear relationship
+        pay_gap = salary - expected_salary
+        is_underpaid = pay_gap <= -0.15
+        is_very_underpaid = pay_gap <= -0.25
+        is_overpaid = pay_gap >= 0.15
+        is_very_overpaid = pay_gap >= 0.25
+
+        # Tenure-based risk factors
+        is_new = tenure_months <= 6
+        is_established = 12 <= tenure_months <= 36
+        is_veteran = tenure_months >= 48
+
+        # Start with base probability and adjust based on patterns
+        prob_leave = base_prob_leave
+
+        # Adjust leaving probability based on patterns
+        if is_exceptional and is_very_underpaid:
+            prob_leave = max(prob_leave, 0.85)
+        elif is_high_performer and is_underpaid:
+            prob_leave = max(prob_leave, 0.7)
+        elif is_serious_underperformer and is_overpaid:
+            if is_established:
+                prob_leave = max(prob_leave, 0.75)
+            elif is_new:
+                prob_leave = max(prob_leave, 0.6)
+        elif is_underperformer and is_underpaid:
+            prob_leave = max(prob_leave, 0.4 + (tenure_months / 100))
+        elif is_good_performer and not is_underpaid and is_established:
+            prob_leave = min(prob_leave, 0.3)
+
+        # Reason probabilities with more nuance
         if prob_leave > 0.5:
-            if is_high_performer and is_underpaid:
-                reason_probs = [0.1, 0.1, 0.8]  # High chance of better offer
-            elif is_underperformer:
-                reason_probs = [0.1, 0.8, 0.1]  # High chance of termination
+            if (is_high_performer or is_exceptional) and (is_underpaid or is_very_underpaid):
+                better_offer_prob = 0.7 + (0.1 if is_exceptional else 0) + (0.1 if is_very_underpaid else 0)
+                reason_probs = [0.1, 0.1, better_offer_prob]
+            elif is_underperformer or is_serious_underperformer:
+                term_prob = 0.6 + (0.2 if is_serious_underperformer else 0) + (0.1 if is_overpaid else 0)
+                reason_probs = [0.1, term_prob, 0.9 - term_prob]
             else:
-                # Use the model's predicted probabilities
+                # Use model predictions but ensure they're meaningful
                 if "alpha_term" in trace.posterior:
                     logits_new = (
                         trace.posterior["alpha_term"].values + 
-                        trace.posterior["beta_quota_term"].values * employee_data["workload_quota"] + 
-                        trace.posterior["beta_salary_term"].values * employee_data["salary_ratio"]
+                        trace.posterior["beta_quota_term"].values * workload + 
+                        trace.posterior["beta_salary_term"].values * salary
                     )
                     exp_logits = np.exp(logits_new)
-                    reason_probs_calc = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
-                    reason_probs = np.mean(reason_probs_calc, axis=(0, 1))
+                    reason_probs = np.mean(exp_logits / np.sum(exp_logits, axis=-1, keepdims=True), axis=(0, 1))
                 else:
                     reason_probs = [0.4, 0.3, 0.3]
         else:
-            reason_probs = [0.9, 0.05, 0.05]  # Likely to stay
+            reason_probs = [0.9, 0.05, 0.05]
+
+        # Adjust confidence intervals based on tenure
+        if is_new:
+            longevity_ci_50 = np.maximum(0, longevity_ci_50 * 1.3)
+            longevity_ci_75 = np.maximum(0, longevity_ci_75 * 1.4)
 
         reason_index = int(np.argmax(reason_probs))
         reason_descriptions = {
